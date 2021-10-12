@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: rollouttest-job
+  name: rollouttest-prometheus
   labels:
     istio-injection: enabled
 
@@ -9,8 +9,8 @@ metadata:
 apiVersion: argoproj.io/v1alpha1
 kind: Rollout
 metadata:
-  name: rollout-nodeapp-job
-  namespace: rollouttest-job
+  name: rollout-nodeapp-prometheus
+  namespace: rollouttest-prometheus
 spec:
   replicas: 1
   strategy:
@@ -20,42 +20,23 @@ spec:
       trafficRouting:
         istio:
           virtualService:
-            name: rollout-vsvc-nodeapp-job
+            name: rollout-vsvc-nodeapp-prometheus
             routes:
               - primary
       steps:
-        - setWeight: 20
-        - pause: { duration: 60 }
-        - analysis:
-            templates:
-              - templateName: job-nodeapp
-            args:
-              - name: host
-                value: canary-svc
-              - name: port
-                value: "80"
-              - name: respCode
-                value: "200"
-        - setWeight: 40
-        - pause: { duration: 60 }
-        - analysis:
-            templates:
-              - templateName: job-nodeapp
-            args:
-              - name: host
-                value: canary-svc
-              - name: port
-                value: "80"
-              - name: respCode
-                value: "200"
+      - setWeight: 20
+      - analysis:
+          templates:
+          - templateName: analysistemplate-nodeapp-prometheus
+
   revisionHistoryLimit: 10
   selector:
     matchLabels:
-      app: nodeapp-job
+      app: nodeapp-prometheus
   template:
     metadata:
       labels:
-        app: nodeapp-job
+        app: nodeapp-prometheus
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/path: /metrics
@@ -91,47 +72,32 @@ spec:
             failureThreshold: 3
 
 ---
+
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
-  name: job-nodeapp
-  namespace: rollouttest-job
+  name: analysistemplate-nodeapp-prometheus
+  namespace: rollouttest-prometheus
 spec:
-  args:
-    - name: host
-    - name: port
-    - name: respCode
   metrics:
-    - name: job-nodeapp
-      provider:
-        job:
-          spec:
-            backoffLimit: 1
-            template:
-              metadata:
-                annotations:
-                  sidecar.istio.io/inject: “false”
-              spec:
-                containers:
-                  - name: jobtest
-                    image: albertogarces/nodeapp-01-test:v01
-                    imagePullPolicy: Always
-                    command:
-                      [
-                        "/bin/sh",
-                        "index.sh",
-                        "{{args.host}}",
-                        "{{args.port}}",
-                        "{{args.respCode}}",
-                      ]
-                restartPolicy: Never
+  - name: analysistemplate-nodeapp-prometheus-metric
+    interval: 10s
+#     successCondition: result[0] > 0.0
+#     failureCondition: result[0] < 0.0
+    failureLimit: 5
+    count: 5
+    provider:
+      prometheus:
+        address: http://prometheus-server.prometheus:80
+        query: |
+          (sum(test_counter{code="200",serviceversion="v02"}) or vector (0)) - (sum(test_counter{code="500",serviceversion="v02"}) or vector (0))
 
 ---
 apiVersion: networking.istio.io/v1alpha3
 kind: Gateway
 metadata:
   name: istio-rollout-gateway
-  namespace: rollouttest-job
+  namespace: rollouttest-prometheus
 spec:
   selector:
     istio: ingressgateway
@@ -147,8 +113,8 @@ spec:
 apiVersion: networking.istio.io/v1alpha3
 kind: VirtualService
 metadata:
-  name: rollout-vsvc-nodeapp-job
-  namespace: rollouttest-job
+  name: rollout-vsvc-nodeapp-prometheus
+  namespace: rollouttest-prometheus
 spec:
   gateways:
     - istio-rollout-gateway
@@ -169,7 +135,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: stable-svc
-  namespace: rollouttest-job
+  namespace: rollouttest-prometheus
 spec:
   ports:
     - port: 80
@@ -177,14 +143,14 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: nodeapp-job
+    app: nodeapp-prometheus
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: canary-svc
-  namespace: rollouttest-job
+  namespace: rollouttest-prometheus
 spec:
   ports:
     - port: 80
@@ -192,4 +158,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: nodeapp-job
+    app: nodeapp-prometheus
